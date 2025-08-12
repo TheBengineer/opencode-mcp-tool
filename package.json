@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "opencode-mcp": "dist/index.js"
+    "opencode-mcp-tool": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
