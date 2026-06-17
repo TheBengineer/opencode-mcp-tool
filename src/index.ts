@@ -18,8 +18,9 @@ import {
   CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Logger } from "./utils/logger.js";
-import { PROTOCOL, ToolArguments } from "./constants.js";
+import { PROTOCOL, ToolArguments, PROCESS, HTTP } from "./constants.js";
 import type { LogLevel } from "./constants.js";
+import type http from "node:http";
 import { setServerConfig } from "./config.js";
 import { loadConfig, autoDetectModel, isInteractive, getConfigPath } from "./config/index.js";
 import { runSetupWizard } from "./commands/setup.js";
@@ -35,7 +36,6 @@ import { cleanupActiveProcesses } from "./tools/opencode.tool.js";
 import { cleanupActiveRespondProcesses } from "./tools/opencode-respond.tool.js";
 import { getTaskManager, resetTaskManager } from "./tasks/sharedTaskManager.js";
 import { initPersistence, getPersistence } from "./persistence/index.js";
-import { PROCESS } from "./constants.js";
 
 const server = new Server(
   {
@@ -369,6 +369,9 @@ async function main() {
     .option("-f, --fallback-model <model>", "Fallback model for quota/error situations")
     .option("--log-level <level>", "Log level: debug, info, warn, error, silent (default: warn)")
     .option("--setup", "Run interactive setup wizard")
+    .option("--http", "Run in HTTP mode instead of stdio")
+    .option("--port <port>", "HTTP server port (default: 3100)")
+    .option("--host <host>", "HTTP server host (default: 127.0.0.1)")
     .parse();
 
   const options = program.opts();
@@ -420,15 +423,30 @@ async function main() {
   // Initialize persistence (non-fatal on failure)
   await initPersistence();
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  if (options.http) {
+    const { createHttpServer } = await import("./transport/httpServer.js");
+    const port = options.port ? parseInt(options.port, 10) : HTTP.DEFAULT_PORT;
+    const host = options.host || HTTP.DEFAULT_HOST;
 
-  // Start periodic task purge
-  purgeInterval = setInterval(() => {
-    getTaskManager().purgeCompletedTasks(PROCESS.COMPLETED_TASK_MAX_AGE_MS);
-  }, PROCESS.PURGE_INTERVAL_MS);
+    httpServerRef = await createHttpServer(server, { port, host });
 
-  Logger.debug("opencode-mcp-tool listening on stdio");
+    // Start periodic task purge
+    purgeInterval = setInterval(() => {
+      getTaskManager().purgeCompletedTasks(PROCESS.COMPLETED_TASK_MAX_AGE_MS);
+    }, PROCESS.PURGE_INTERVAL_MS);
+
+    Logger.debug(`opencode-mcp-tool listening on http://${host}:${port}/mcp`);
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    // Start periodic task purge
+    purgeInterval = setInterval(() => {
+      getTaskManager().purgeCompletedTasks(PROCESS.COMPLETED_TASK_MAX_AGE_MS);
+    }, PROCESS.PURGE_INTERVAL_MS);
+
+    Logger.debug("opencode-mcp-tool listening on stdio");
+  }
 }
 
 // ============================================================================
@@ -446,6 +464,13 @@ function gracefulShutdown(signal: string): void {
   // Kill all active processes
   cleanupActiveProcesses();
   cleanupActiveRespondProcesses();
+
+  // Close HTTP server if running
+  if (httpServerRef) {
+    Logger.debug("Closing HTTP server...");
+    httpServerRef.close();
+    httpServerRef = null;
+  }
 
   // Clear progress contexts
   for (const [, ctx] of progressContexts) {
@@ -484,6 +509,7 @@ process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
 // ============================================================================
 
 let purgeInterval: NodeJS.Timeout | null = null;
+let httpServerRef: http.Server | null = null;
 
 main().catch((error) => {
   Logger.error("Fatal error:", error);

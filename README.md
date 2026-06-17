@@ -147,6 +147,35 @@ Or with explicit model:
 
 After updating the configuration, restart your terminal session.
 
+## HTTP Mode
+
+Run the MCP server over HTTP instead of stdio for remote access:
+
+```bash
+node dist/index.js --http
+node dist/index.js --http --port 3100 --host 0.0.0.0
+```
+
+**CLI Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--http` | (disabled) | Run in HTTP mode instead of stdio |
+| `--port <port>` | 3100 | HTTP server port |
+| `--host <host>` | 127.0.0.1 | HTTP server bind address |
+
+**Endpoints:**
+- `GET /health` — Health check (returns status, version, uptime)
+- `POST /mcp` — JSON-RPC MCP messages
+- `GET /mcp` — SSE stream for server-initiated notifications
+
+**CORS:** Enabled by default for all origins. The server responds to OPTIONS preflight requests automatically.
+
+**Add to Claude Code:**
+```bash
+claude mcp add opencode -- http://localhost:3100/mcp
+```
+
 ## Async Task Workflow
 
 This MCP server uses an **async task architecture** for non-blocking execution:
