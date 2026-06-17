@@ -31,7 +31,9 @@ WORKDIR /app
 # lildax is the wrapper script; the actual binary is in the platform-specific optional dep
 RUN npm install -g @opencode-ai/cli@1.17.7 && \
     npm install -g @opencode-ai/cli-linux-x64@1.17.7 2>/dev/null || true && \
-    ln -sf /usr/local/bin/lildax /usr/local/bin/opencode
+    ln -sf /usr/local/bin/lildax /usr/local/bin/opencode && \
+    npm cache clean --force && \
+    rm -rf /root/.npm/_cacache
 
 # Install oh-my-openagent plugin — provides 11 discipline agents, MCPs, Team Mode
 # Non-interactive: --no-tui --skip-auth. Enables OpenCode Zen (free tier models).
@@ -41,7 +43,8 @@ ENV OPENCODE_VERSION="1.17.7"
 RUN bunx oh-my-openagent install --no-tui --platform=opencode --skip-auth \
     --claude=no --openai=no --gemini=no --copilot=no \
     --opencode-zen=yes --zai-coding-plan=no --opencode-go=no \
-    --kimi-for-coding=no --vercel-ai-gateway=no
+    --kimi-for-coding=no --vercel-ai-gateway=no && \
+    rm -rf /root/.bun/install/cache /tmp/bun* ~/.bun/.cache
 
 # Copy built MCP server from builder stage to /app (absolute paths)
 COPY --from=builder /app/dist /app/dist
