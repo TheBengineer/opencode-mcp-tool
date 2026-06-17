@@ -214,6 +214,27 @@ The server can also run over HTTP instead of stdio. Start with `--http` and cust
 - **Endpoints:** `GET /health`, `POST/GET/DELETE /mcp`
 - **Verify:** `curl http://localhost:3100/health`
 
+## Docker
+
+Run the MCP server in a container with OpenCode CLI included:
+
+```bash
+# 1. Configure API key and model
+cp .env.example .env
+# Edit .env with your API key (e.g., ANTHROPIC_API_KEY=sk-...)
+
+# 2. Start the container
+docker compose up -d
+
+# 3. Verify
+curl http://localhost:3100/health
+
+# 4. Connect from Claude Code
+claude mcp add opencode -- http://localhost:3100/mcp
+```
+
+The container mounts `./workspace:/workspace` — files created by OpenCode tasks appear on your host in the `workspace/` directory.
+
 ## Async Task Workflow
 
 This MCP server uses an **async task architecture** for non-blocking execution:
