@@ -37,7 +37,7 @@ Before using this tool, ensure you have:
 
 ### Quick Setup (Recommended)
 
-**Option 1: Interactive Setup Wizard**
+**Option 1: Interactive Setup Wizard (stdio — local)**
 
 ```bash
 # Clone and run setup
@@ -53,28 +53,84 @@ The wizard will:
 - Configure default agent mode
 - Save settings to `~/.config/opencode-mcp/config.json`
 
-**Option 2: Auto-Detection**
+**Option 2: Quick start (stdio — local)**
 
-If you've used OpenCode before, the server automatically detects your most recently used model. Just run without flags:
+If you've used OpenCode before, the server auto-detects your most recently used model:
 
 ```bash
 node dist/index.js
 ```
 
-**Option 3: Explicit Model**
+**Option 3: Web/HTTP mode (remote)**
+
+Start the MCP server over HTTP instead of stdio, making it accessible over the network:
 
 ```bash
-node dist/index.js --model google/gemini-2.5-pro
+cd Better-OpenCodeMCP
+npm run build
+
+# Start HTTP server (default port 3100, binds to 127.0.0.1):
+node dist/index.js --http
+
+# Or customize the port and bind address:
+node dist/index.js --http --port 3100 --host 0.0.0.0
 ```
 
-### Add to Claude Code
+Once started, you'll see:
+```
+[OMCPT] opencode-mcp-tool listening on http://127.0.0.1:3100/mcp
+```
 
+Verify it's running:
 ```bash
-# After running --setup or with auto-detection
-claude mcp add opencode -- node /path/to/Better-OpenCodeMCP/dist/index.js
+curl http://127.0.0.1:3100/health
+# → {"status":"ok","version":"2.0.0","uptime":1234,"uptimeHuman":"1s"}
+```
 
-# Or with explicit model
-claude mcp add opencode -- node /path/to/Better-OpenCodeMCP/dist/index.js -- --model google/gemini-2.5-pro
+Stop the server with `Ctrl+C`.
+
+**Available endpoints:**
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/health` | Health check |
+| `POST` | `/mcp` | JSON-RPC MCP messages |
+| `GET` | `/mcp` | SSE stream for notifications |
+| `DELETE` | `/mcp` | Session cleanup |
+| `OPTIONS` | `*` | CORS preflight |
+
+### Add MCP to Your Client
+
+**Claude Code (stdio):**
+```bash
+claude mcp add opencode -- node /path/to/Better-OpenCodeMCP/dist/index.js
+```
+
+**Claude Code (HTTP):**
+```bash
+claude mcp add opencode -- http://localhost:3100/mcp
+```
+
+**Claude Desktop (stdio):**
+```json
+{
+  "mcpServers": {
+    "opencode": {
+      "command": "node",
+      "args": ["/path/to/Better-OpenCodeMCP/dist/index.js"]
+    }
+  }
+}
+```
+
+**Claude Desktop (HTTP):**
+```json
+{
+  "mcpServers": {
+    "opencode": {
+      "url": "http://localhost:3100/mcp"
+    }
+  }
+}
 ```
 
 ### Verify Installation
@@ -110,10 +166,11 @@ Created by `--setup` wizard at `~/.config/opencode-mcp/config.json`:
 }
 ```
 
-### MCP Client Configuration
+### Claude Desktop Configuration
+
+Add to your Claude Desktop config file (see paths below):
 
 **Stdio (local):**
-
 ```json
 {
   "mcpServers": {
@@ -126,7 +183,6 @@ Created by `--setup` wizard at `~/.config/opencode-mcp/config.json`:
 ```
 
 **HTTP (remote):**
-
 ```json
 {
   "mcpServers": {
@@ -137,56 +193,26 @@ Created by `--setup` wizard at `~/.config/opencode-mcp/config.json`:
 }
 ```
 
-**Or with explicit model (stdio):**
+**Config file locations:**
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/claude/claude_desktop_config.json`
 
-```json
-{
-  "mcpServers": {
-    "opencode": {
-      "command": "node",
-      "args": ["/path/to/Better-OpenCodeMCP/dist/index.js", "--model", "google/gemini-2.5-pro"]
-    }
-  }
-}
-```
+After updating, restart Claude Desktop.
 
-**Configuration File Locations:**
+## HTTP Mode Reference
 
-- **Claude Desktop**:
-  - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-  - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-  - **Linux**: `~/.config/claude/claude_desktop_config.json`
-
-After updating the configuration, restart your terminal session.
-
-## HTTP Mode
-
-Run the MCP server over HTTP instead of stdio for remote access:
-
-```bash
-node dist/index.js --http
-node dist/index.js --http --port 3100 --host 0.0.0.0
-```
-
-**CLI Options:**
+The server can also run over HTTP instead of stdio. Start with `--http` and customize with these flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--http` | (disabled) | Run in HTTP mode instead of stdio |
 | `--port <port>` | 3100 | HTTP server port |
-| `--host <host>` | 127.0.0.1 | HTTP server bind address |
+| `--host <host>` | 127.0.0.1 | HTTP server bind address (`0.0.0.0` for all interfaces) |
 
-**Endpoints:**
-- `GET /health` — Health check (returns status, version, uptime)
-- `POST /mcp` — JSON-RPC MCP messages
-- `GET /mcp` — SSE stream for server-initiated notifications
-
-**CORS:** Enabled by default for all origins. The server responds to OPTIONS preflight requests automatically.
-
-**Add to Claude Code:**
-```bash
-claude mcp add opencode -- http://localhost:3100/mcp
-```
+- **CORS:** Enabled by default for all origins with automatic OPTIONS preflight handling.
+- **Endpoints:** `GET /health`, `POST/GET/DELETE /mcp`
+- **Verify:** `curl http://localhost:3100/health`
 
 ## Async Task Workflow
 
