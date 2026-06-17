@@ -21,6 +21,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
 WORKDIR /app
 
 # Install OpenCode CLI (npm package downloads the platform binary on first run)
+# lildax is the binary shipper — --version verifies the download is cached
 RUN npm install -g @opencode-ai/cli@1.17.7 && \
     lildax --version 2>/dev/null || true
 
@@ -36,7 +37,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Expose the MCP server port
 EXPOSE 3100
 
-# Create workspace volume mount point
+# Mounted workspace volume — OpenCode processes spawned by the MCP server
+# will create output files here (inherits CWD from parent process)
 RUN mkdir -p /workspace
 
 ENV OPENCODE_MODEL=""

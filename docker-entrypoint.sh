@@ -13,6 +13,37 @@ MODEL_ID="${MODEL#*/}"
 echo "=== OpenCode MCP Container ==="
 echo "Model: $MODEL"
 
+# Validate API key is set for the chosen provider
+case "$PROVIDER" in
+  anthropic)
+    if [ -z "$ANTHROPIC_API_KEY" ]; then
+      echo "FATAL: ANTHROPIC_API_KEY is not set. OpenCode cannot use $MODEL without it."
+      echo "Set it via environment variable in docker-compose.yml or .env file."
+      exit 1
+    fi
+    echo "API key: OK"
+    ;;
+  openai)
+    if [ -z "$OPENAI_API_KEY" ]; then
+      echo "FATAL: OPENAI_API_KEY is not set. OpenCode cannot use $MODEL without it."
+      echo "Set it via environment variable in docker-compose.yml or .env file."
+      exit 1
+    fi
+    echo "API key: OK"
+    ;;
+  google)
+    if [ -z "$GOOGLE_API_KEY" ]; then
+      echo "FATAL: GOOGLE_API_KEY is not set. OpenCode cannot use $MODEL without it."
+      echo "Set it via environment variable in docker-compose.yml or .env file."
+      exit 1
+    fi
+    echo "API key: OK"
+    ;;
+  *)
+    echo "Warning: Unknown provider '$PROVIDER'. Ensure the appropriate API key is set."
+    ;;
+esac
+
 # Create OpenCode state directory with the configured model
 # This tells OpenCode which model provider to use.
 mkdir -p /root/.local/state/opencode
