@@ -112,7 +112,7 @@ Created by `--setup` wizard at `~/.config/opencode-mcp/config.json`:
 
 ### MCP Client Configuration
 
-For Claude Desktop, add to your config:
+**Stdio (local):**
 
 ```json
 {
@@ -125,7 +125,19 @@ For Claude Desktop, add to your config:
 }
 ```
 
-Or with explicit model:
+**HTTP (remote):**
+
+```json
+{
+  "mcpServers": {
+    "opencode": {
+      "url": "http://localhost:3100/mcp"
+    }
+  }
+}
+```
+
+**Or with explicit model (stdio):**
 
 ```json
 {
@@ -146,6 +158,35 @@ Or with explicit model:
   - **Linux**: `~/.config/claude/claude_desktop_config.json`
 
 After updating the configuration, restart your terminal session.
+
+## HTTP Mode
+
+Run the MCP server over HTTP instead of stdio for remote access:
+
+```bash
+node dist/index.js --http
+node dist/index.js --http --port 3100 --host 0.0.0.0
+```
+
+**CLI Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--http` | (disabled) | Run in HTTP mode instead of stdio |
+| `--port <port>` | 3100 | HTTP server port |
+| `--host <host>` | 127.0.0.1 | HTTP server bind address |
+
+**Endpoints:**
+- `GET /health` — Health check (returns status, version, uptime)
+- `POST /mcp` — JSON-RPC MCP messages
+- `GET /mcp` — SSE stream for server-initiated notifications
+
+**CORS:** Enabled by default for all origins. The server responds to OPTIONS preflight requests automatically.
+
+**Add to Claude Code:**
+```bash
+claude mcp add opencode -- http://localhost:3100/mcp
+```
 
 ## Async Task Workflow
 
@@ -318,7 +359,10 @@ Log levels: `debug`, `info`, `warn` (default), `error`, `silent`
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request at [github.com/ajhcs/Better-OpenCodeMCP](https://github.com/ajhcs/Better-OpenCodeMCP).
+Contributions are welcome! Check out the [Contributing Guide](CONTRIBUTING.md) to get started.
+
+- [Good first issues](https://github.com/ajhcs/Better-OpenCodeMCP/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — great entry points for new contributors
+- [Help wanted](https://github.com/ajhcs/Better-OpenCodeMCP/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22) — bigger items where we'd appreciate help
 
 ## License
 

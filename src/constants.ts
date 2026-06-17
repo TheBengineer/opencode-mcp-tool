@@ -99,6 +99,19 @@ export const PROCESS = {
   PURGE_INTERVAL_MS: 10 * 60 * 1000, // 10 minutes
 } as const;
 
+// HTTP Server defaults
+export const HTTP = {
+  DEFAULT_PORT: 3100,
+  DEFAULT_HOST: "127.0.0.1",
+  MAX_BODY_SIZE: 4 * 1024 * 1024, // 4MB
+  CORS_HEADERS: {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, mcp-session-id, mcp-protocol-version, last-event-id",
+    "Access-Control-Max-Age": "86400",
+  },
+} as const;
+
 // Log levels
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
