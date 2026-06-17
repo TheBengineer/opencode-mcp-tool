@@ -15,14 +15,8 @@ RUN npm run build
 FROM node:20-slim
 
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl unzip \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Bun runtime (needed by oh-my-openagent installer)
-# Official installer via curl — installs to ~/.bun/bin/
-RUN curl -fsSL https://bun.sh/install | bash
-
-ENV PATH="/root/.bun/bin:/root/.opencode/bin:${PATH}"
 
 # App files go to a stable location
 WORKDIR /app
@@ -35,18 +29,7 @@ RUN npm install -g @opencode-ai/cli@1.17.7 && \
     npm cache clean --force && \
     rm -rf /root/.npm/_cacache
 
-# Install oh-my-openagent plugin — provides 11 discipline agents, MCPs, Team Mode
-# Non-interactive: --no-tui --skip-auth. Enables OpenCode Zen (free tier models).
-# Set OPENCODE_BIN_PATH and OPENCODE_VERSION to bypass version detection
-ENV OPENCODE_BIN_PATH="/usr/local/bin/lildax"
-ENV OPENCODE_VERSION="1.17.7"
-RUN bunx oh-my-openagent install --no-tui --platform=opencode --skip-auth \
-    --claude=no --openai=no --gemini=no --copilot=no \
-    --opencode-zen=yes --zai-coding-plan=no --opencode-go=no \
-    --kimi-for-coding=no --vercel-ai-gateway=no && \
-    rm -rf /root/.bun/install/cache /tmp/bun* ~/.bun/.cache
-
-# Copy built MCP server from builder stage to /app (absolute paths)
+# Built MCP server from builder stage
 COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/package.json /app/
