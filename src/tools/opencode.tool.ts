@@ -14,6 +14,7 @@ import { Logger } from "../utils/logger.js";
 import { CLI, LIMITS, PROCESS } from "../constants.js";
 import { killProcess } from "../utils/processKill.js";
 import { getPersistence } from "../persistence/sharedPersistence.js";
+import { openCodeProcessPool } from "../utils/processPool.js";
 
 // ============================================================================
 // Schema
@@ -277,8 +278,14 @@ NOTE: This is an async operation. The task continues running after this tool ret
 
     Logger.debug(`Created task ${taskId}: ${title}`);
 
-    // Spawn the OpenCode process (runs in background)
-    spawnOpenCodeProcess(taskId, task, effectiveModel, agent, outputGuidance);
+    // Spawn the OpenCode process through the process pool to limit concurrency
+    openCodeProcessPool.execute(() => {
+      spawnOpenCodeProcess(taskId, task, effectiveModel, agent, outputGuidance);
+      return Promise.resolve();
+    }).catch((err) => {
+      Logger.error(`Pool rejected spawn for task ${taskId}:`, err);
+      taskManager.failTask(taskId, `Process rejected by pool: ${err.message}`);
+    });
 
     // Get metadata for response (sessionId will be "" until first event)
     const metadata = taskManager.getTaskMetadata(taskId);
