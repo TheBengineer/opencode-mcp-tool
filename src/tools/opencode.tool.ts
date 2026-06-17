@@ -78,6 +78,7 @@ const processTimeouts = new Map<string, NodeJS.Timeout>();
 
 /**
  * Spawns OpenCode process with JSON format and processes events.
+ * Returns a Promise that resolves when the process exits (for pool concurrency tracking).
  */
 function spawnOpenCodeProcess(
   taskId: string,
@@ -85,7 +86,7 @@ function spawnOpenCodeProcess(
   model: string,
   agent?: string,
   outputGuidance?: string
-): void {
+): Promise<void> {
   const taskManager = getTaskManager();
 
   // Build command arguments - must use 'run' subcommand for --format json
@@ -152,44 +153,48 @@ function spawnOpenCodeProcess(
     Logger.debug(`OpenCode stderr [${taskId}]: ${text}`);
   });
 
-  // Handle process errors
-  proc.on("error", (error: Error) => {
-    Logger.error(`OpenCode process error [${taskId}]:`, error);
-    const t = processTimeouts.get(taskId);
-    if (t) clearTimeout(t);
-    processTimeouts.delete(taskId);
-    taskManager.failTask(taskId, `Process error: ${error.message}`);
-    activeProcesses.delete(taskId);
-  });
+  return new Promise<void>((resolve, reject) => {
+    // Handle process errors (process failed to spawn)
+    proc.on("error", (error: Error) => {
+      Logger.error(`OpenCode process error [${taskId}]:`, error);
+      const t = processTimeouts.get(taskId);
+      if (t) clearTimeout(t);
+      processTimeouts.delete(taskId);
+      taskManager.failTask(taskId, `Process error: ${error.message}`);
+      activeProcesses.delete(taskId);
+      reject(error);
+    });
 
-  // Handle process exit
-  proc.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
-    Logger.debug(`OpenCode process closed [${taskId}]: code=${code}, signal=${signal}`);
+    // Handle process exit — resolves the promise so the pool can start the next task
+    proc.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      Logger.debug(`OpenCode process closed [${taskId}]: code=${code}, signal=${signal}`);
 
-    // Clear the timeout
-    const t = processTimeouts.get(taskId);
-    if (t) clearTimeout(t);
-    processTimeouts.delete(taskId);
+      // Clear the timeout
+      const t = processTimeouts.get(taskId);
+      if (t) clearTimeout(t);
+      processTimeouts.delete(taskId);
 
-    // Process any remaining buffer content
-    if (buffer.trim()) {
-      const event = parseOpenCodeEvent(buffer);
-      if (event) {
-        processEvent(taskId, event);
+      // Process any remaining buffer content
+      if (buffer.trim()) {
+        const event = parseOpenCodeEvent(buffer);
+        if (event) {
+          processEvent(taskId, event);
+        }
       }
-    }
 
-    // Check if task needs to be marked as failed
-    const status = taskManager.getTaskStatus(taskId);
-    if (status === "working") {
-      if (code !== null && code !== 0) {
-        taskManager.failTask(taskId, `Process exited with code ${code}`);
-      } else if (signal) {
-        taskManager.failTask(taskId, `Process killed by signal ${signal}`);
+      // Check if task needs to be marked as failed
+      const status = taskManager.getTaskStatus(taskId);
+      if (status === "working") {
+        if (code !== null && code !== 0) {
+          taskManager.failTask(taskId, `Process exited with code ${code}`);
+        } else if (signal) {
+          taskManager.failTask(taskId, `Process killed by signal ${signal}`);
+        }
       }
-    }
 
-    activeProcesses.delete(taskId);
+      activeProcesses.delete(taskId);
+      resolve();
+    });
   });
 }
 
@@ -279,10 +284,9 @@ NOTE: This is an async operation. The task continues running after this tool ret
     Logger.debug(`Created task ${taskId}: ${title}`);
 
     // Spawn the OpenCode process through the process pool to limit concurrency
-    openCodeProcessPool.execute(() => {
-      spawnOpenCodeProcess(taskId, task, effectiveModel, agent, outputGuidance);
-      return Promise.resolve();
-    }).catch((err) => {
+    openCodeProcessPool.execute(() =>
+      spawnOpenCodeProcess(taskId, task, effectiveModel, agent, outputGuidance)
+    ).catch((err) => {
       Logger.error(`Pool rejected spawn for task ${taskId}:`, err);
       taskManager.failTask(taskId, `Process rejected by pool: ${err.message}`);
     });
