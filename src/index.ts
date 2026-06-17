@@ -19,6 +19,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { Logger } from "./utils/logger.js";
 import { PROTOCOL, ToolArguments } from "./constants.js";
+import type { LogLevel } from "./constants.js";
+import { setServerConfig } from "./config.js";
+import { loadConfig, autoDetectModel, isInteractive, getConfigPath } from "./config/index.js";
+import { runSetupWizard } from "./commands/setup.js";
 
 import {
   getToolDefinitions,
@@ -27,32 +31,45 @@ import {
   toolExists,
   getPromptMessage
 } from "./tools/index.js";
-
-// Global configuration for model settings
-export interface ServerConfig {
-  primaryModel: string;
-  fallbackModel?: string;
-}
-
-let serverConfig: ServerConfig;
+import { cleanupActiveProcesses } from "./tools/opencode.tool.js";
+import { cleanupActiveRespondProcesses } from "./tools/opencode-respond.tool.js";
+import { getTaskManager, resetTaskManager } from "./tasks/sharedTaskManager.js";
+import { initPersistence, getPersistence } from "./persistence/index.js";
+import { PROCESS } from "./constants.js";
 
 const server = new Server(
   {
     name: "opencode-mcp",
-    version: "1.1.4",
+    version: "2.0.0",
   }, {
   capabilities: {
     tools: {},
     prompts: {},
-    notifications: {},
     logging: {},
   },
 },
 );
 
-let isProcessing = false; let currentOperationName = ""; let latestOutput = "";
+// Per-request progress context to support concurrent tool calls
+interface ProgressContext {
+  operationName: string;
+  latestOutput: string;
+  interval: NodeJS.Timeout | null;
+  progressToken?: string | number;
+  messageIndex: number;
+  progress: number;
+}
 
-async function sendNotification(method: string, params: any) {
+// Map of request ID to progress context - enables concurrent requests
+const progressContexts = new Map<string, ProgressContext>();
+
+// Generate unique request ID
+let requestCounter = 0;
+function generateRequestId(): string {
+  return `req-${Date.now()}-${++requestCounter}`;
+}
+
+async function sendNotification(method: string, params: Record<string, unknown>) {
   try {
     await server.notification({ method, params });
   } catch (error) {
@@ -75,12 +92,12 @@ async function sendProgressNotification(
   if (!progressToken) return; // Only send if client requested progress
 
   try {
-    const params: any = {
+    const params: Record<string, unknown> = {
       progressToken,
-      progress
+      progress,
     };
 
-    if (total !== undefined) params.total = total; // future cache progress
+    if (total !== undefined) params.total = total;
     if (message) params.message = message;
 
     await server.notification({
@@ -95,10 +112,20 @@ async function sendProgressNotification(
 function startProgressUpdates(
   operationName: string,
   progressToken?: string | number
-) {
-  isProcessing = true;
-  currentOperationName = operationName;
-  latestOutput = ""; // Reset latest output
+): string {
+  const requestId = generateRequestId();
+
+  // Create isolated context for this request
+  const context: ProgressContext = {
+    operationName,
+    latestOutput: "",
+    interval: null,
+    progressToken,
+    messageIndex: 0,
+    progress: 0,
+  };
+
+  progressContexts.set(requestId, context);
 
   const progressMessages = [
     `🧠 ${operationName} - OpenCode is analyzing your request...`,
@@ -107,9 +134,6 @@ function startProgressUpdates(
     `⏱️ ${operationName} - Large analysis in progress (this is normal for big requests)...`,
     `🔍 ${operationName} - Still working... OpenCode takes time for quality results...`,
   ];
-
-  let messageIndex = 0;
-  let progress = 0;
 
   // Send immediate acknowledgment if progress requested
   if (progressToken) {
@@ -123,49 +147,62 @@ function startProgressUpdates(
 
   // Keep client alive with periodic updates
   const progressInterval = setInterval(async () => {
-    if (isProcessing && progressToken) {
-      // Simply increment progress value
-      progress += 1;
+    const ctx = progressContexts.get(requestId);
+    if (ctx && ctx.progressToken) {
+      ctx.progress += 1;
 
       // Include latest output if available
-      const baseMessage = progressMessages[messageIndex % progressMessages.length];
-      const outputPreview = latestOutput.slice(-150).trim(); // Last 150 chars
+      const baseMessage = progressMessages[ctx.messageIndex % progressMessages.length];
+      const outputPreview = ctx.latestOutput.slice(-150).trim(); // Last 150 chars
       const message = outputPreview
         ? `${baseMessage}\n📝 Output: ...${outputPreview}`
         : baseMessage;
 
       await sendProgressNotification(
-        progressToken,
-        progress,
+        ctx.progressToken,
+        ctx.progress,
         undefined, // No total - indeterminate progress
         message
       );
-      messageIndex++;
-    } else if (!isProcessing) {
+      ctx.messageIndex++;
+    } else if (!ctx) {
+      // Context was removed, clean up interval
       clearInterval(progressInterval);
     }
   }, PROTOCOL.KEEPALIVE_INTERVAL); // Every 25 seconds
 
-  return { interval: progressInterval, progressToken };
+  context.interval = progressInterval;
+  return requestId;
 }
 
-function stopProgressUpdates(
-  progressData: { interval: NodeJS.Timeout; progressToken?: string | number },
-  success: boolean = true
-) {
-  const operationName = currentOperationName; // Store before clearing
-  isProcessing = false;
-  currentOperationName = "";
-  clearInterval(progressData.interval);
+function stopProgressUpdates(requestId: string, success: boolean = true) {
+  const context = progressContexts.get(requestId);
+  if (!context) return;
+
+  // Clear interval first
+  if (context.interval) {
+    clearInterval(context.interval);
+  }
 
   // Send final progress notification if client requested progress
-  if (progressData.progressToken) {
+  if (context.progressToken) {
     sendProgressNotification(
-      progressData.progressToken,
+      context.progressToken,
       100,
       100,
-      success ? `✅ ${operationName} completed successfully` : `❌ ${operationName} failed`
+      success ? `✅ ${context.operationName} completed successfully` : `❌ ${context.operationName} failed`
     );
+  }
+
+  // Remove context from map
+  progressContexts.delete(requestId);
+}
+
+// Helper to update output for a specific request
+function updateRequestOutput(requestId: string, newOutput: string) {
+  const context = progressContexts.get(requestId);
+  if (context) {
+    context.latestOutput = newOutput;
   }
 }
 
@@ -174,16 +211,16 @@ server.setRequestHandler(ListToolsRequestSchema, async (request: ListToolsReques
   return { tools: getToolDefinitions() as unknown as Tool[] };
 });
 
-// tools/get
+// tools/call
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<CallToolResult> => {
   const toolName: string = request.params.name;
 
   if (toolExists(toolName)) {
     // Check if client requested progress updates
-    const progressToken = (request.params as any)._meta?.progressToken;
+    const progressToken = (request.params as Record<string, unknown> & { _meta?: { progressToken?: string | number } })._meta?.progressToken;
 
-    // Start progress updates if client requested them
-    const progressData = startProgressUpdates(toolName, progressToken);
+    // Start progress updates - returns unique request ID for this call
+    const requestId = startProgressUpdates(toolName, progressToken);
 
     try {
       // Get prompt and other parameters from arguments with proper typing
@@ -192,12 +229,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       Logger.toolInvocation(toolName, request.params.arguments);
 
       // Execute the tool using the unified registry with progress callback
+      // Each request has its own isolated output state
       const result = await executeTool(toolName, args, (newOutput) => {
-        latestOutput = newOutput;
+        updateRequestOutput(requestId, newOutput);
       });
 
       // Stop progress updates
-      stopProgressUpdates(progressData, true);
+      stopProgressUpdates(requestId, true);
 
       return {
         content: [
@@ -210,7 +248,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       };
     } catch (error) {
       // Stop progress updates on error
-      stopProgressUpdates(progressData, false);
+      stopProgressUpdates(requestId, false);
 
       Logger.error(`Error in tool '${toolName}':`, error);
 
@@ -259,6 +297,66 @@ server.setRequestHandler(GetPromptRequestSchema, async (request: GetPromptReques
   };
 });
 
+/**
+ * Resolve the model using the resolution chain:
+ * 1. CLI flag (--model)
+ * 2. Config file (~/.config/opencode-mcp/config.json)
+ * 3. Auto-detect from OpenCode's model.json
+ * 4. Interactive wizard (if TTY)
+ * 5. Error with helpful message
+ */
+type AgentMode = 'build' | 'plan' | 'explore';
+
+async function resolveModel(cliModel?: string, cliFallback?: string): Promise<{ model: string; fallback?: string; agent?: AgentMode }> {
+  // 1. CLI flag takes priority
+  if (cliModel) {
+    Logger.debug(`Using model from CLI: ${cliModel}`);
+    return { model: cliModel, fallback: cliFallback };
+  }
+
+  // 2. Check config file
+  const fileConfig = loadConfig();
+  if (fileConfig?.model) {
+    Logger.debug(`Using model from config file: ${fileConfig.model}`);
+    return {
+      model: fileConfig.model,
+      fallback: cliFallback || fileConfig.fallbackModel,
+      agent: fileConfig.defaults?.agent,
+    };
+  }
+
+  // 3. Auto-detect from OpenCode state
+  const autoModel = autoDetectModel();
+  if (autoModel) {
+    Logger.debug(`Using auto-detected model: ${autoModel}`);
+    return { model: autoModel, fallback: cliFallback };
+  }
+
+  // 4. Interactive wizard (if TTY)
+  if (isInteractive()) {
+    Logger.debug('No model found, launching setup wizard...');
+    const wizardConfig = await runSetupWizard();
+    return {
+      model: wizardConfig.model!,
+      fallback: wizardConfig.fallbackModel,
+      agent: wizardConfig.defaults?.agent,
+    };
+  }
+
+  // 5. Error - no model and not interactive
+  const configPath = getConfigPath();
+  console.error(`
+❌ No model configured. Run setup first:
+   opencode-mcp --setup
+
+Or specify directly:
+   opencode-mcp --model google/gemini-2.5-pro
+
+Config file location: ${configPath}
+`);
+  process.exit(1);
+}
+
 // Setup CLI arguments and start the server
 async function main() {
   const program = new Command();
@@ -266,35 +364,128 @@ async function main() {
   program
     .name("opencode-mcp")
     .description("MCP server for OpenCode CLI integration")
-    .version("1.1.4")
-    .requiredOption("-m, --model <model>", "Primary model to use (e.g., google/gemini-2.5-pro)")
+    .version("1.4.0")
+    .option("-m, --model <model>", "Primary model to use (e.g., google/gemini-2.5-pro)")
     .option("-f, --fallback-model <model>", "Fallback model for quota/error situations")
+    .option("--log-level <level>", "Log level: debug, info, warn, error, silent (default: warn)")
+    .option("--setup", "Run interactive setup wizard")
     .parse();
 
   const options = program.opts();
 
-  // Store server configuration globally
-  serverConfig = {
-    primaryModel: options.model,
-    fallbackModel: options.fallbackModel
-  };
-
-  Logger.debug("init opencode-mcp-tool with model:", serverConfig.primaryModel);
-  if (serverConfig.fallbackModel) {
-    Logger.debug("fallback model:", serverConfig.fallbackModel);
+  // Set log level if provided
+  if (options.logLevel) {
+    const validLevels = ["debug", "info", "warn", "error", "silent"];
+    if (validLevels.includes(options.logLevel)) {
+      Logger.setLevel(options.logLevel as LogLevel);
+    } else {
+      console.error(`Invalid log level: ${options.logLevel}. Valid: ${validLevels.join(", ")}`);
+      process.exit(1);
+    }
   }
+
+  // Handle --setup flag
+  if (options.setup) {
+    await runSetupWizard();
+    process.exit(0);
+  }
+
+  // Resolve model using the resolution chain
+  const resolved = await resolveModel(options.model, options.fallbackModel);
+
+  // Store server configuration globally
+  const config = {
+    primaryModel: resolved.model,
+    fallbackModel: resolved.fallback,
+    defaultAgent: resolved.agent,
+  };
+  setServerConfig(config);
+
+  Logger.debug("init opencode-mcp-tool with model:", config.primaryModel);
+  if (config.fallbackModel) {
+    Logger.debug("fallback model:", config.fallbackModel);
+  }
+  if (config.defaultAgent) {
+    Logger.debug("default agent:", config.defaultAgent);
+  }
+
+  // Apply config pool size if specified
+  const fileConfig = loadConfig();
+  if (fileConfig?.pool?.maxConcurrent) {
+    const { openCodeProcessPool } = await import("./utils/processPool.js");
+    openCodeProcessPool.setPoolSize(fileConfig.pool.maxConcurrent);
+    Logger.debug(`Pool size set to ${fileConfig.pool.maxConcurrent} from config`);
+  }
+
+  // Initialize persistence (non-fatal on failure)
+  await initPersistence();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Start periodic task purge
+  purgeInterval = setInterval(() => {
+    getTaskManager().purgeCompletedTasks(PROCESS.COMPLETED_TASK_MAX_AGE_MS);
+  }, PROCESS.PURGE_INTERVAL_MS);
+
   Logger.debug("opencode-mcp-tool listening on stdio");
 }
 
-// Export server config for use in tools
-export function getServerConfig(): ServerConfig {
-  return serverConfig;
+// ============================================================================
+// Shutdown Handling
+// ============================================================================
+
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string): void {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  Logger.debug(`Received ${signal}, shutting down gracefully...`);
+
+  // Kill all active processes
+  cleanupActiveProcesses();
+  cleanupActiveRespondProcesses();
+
+  // Clear progress contexts
+  for (const [, ctx] of progressContexts) {
+    if (ctx.interval) clearInterval(ctx.interval);
+  }
+  progressContexts.clear();
+
+  // Mark active tasks as failed in persistence
+  const persistence = getPersistence();
+  if (persistence) {
+    const taskManager = getTaskManager();
+    const activeTasks = taskManager.listActiveTasks();
+    for (const task of activeTasks) {
+      persistence.saveTaskMetadata(task.taskId, task, "failed", `Server shutdown (${signal})`).catch(() => {});
+    }
+  }
+
+  // Reset task manager (clears timers and tasks)
+  resetTaskManager();
+
+  // Clear purge interval
+  if (purgeInterval) {
+    clearInterval(purgeInterval);
+  }
+
+  Logger.debug("Shutdown complete");
+  process.exit(0);
 }
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
+
+// ============================================================================
+// Periodic Task Purge
+// ============================================================================
+
+let purgeInterval: NodeJS.Timeout | null = null;
 
 main().catch((error) => {
   Logger.error("Fatal error:", error);
   process.exit(1);
-}); 
+});
