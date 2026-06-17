@@ -112,7 +112,7 @@ Created by `--setup` wizard at `~/.config/opencode-mcp/config.json`:
 
 ### MCP Client Configuration
 
-For Claude Desktop, add to your config:
+**Stdio (local):**
 
 ```json
 {
@@ -125,7 +125,19 @@ For Claude Desktop, add to your config:
 }
 ```
 
-Or with explicit model:
+**HTTP (remote):**
+
+```json
+{
+  "mcpServers": {
+    "opencode": {
+      "url": "http://localhost:3100/mcp"
+    }
+  }
+}
+```
+
+**Or with explicit model (stdio):**
 
 ```json
 {
