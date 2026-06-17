@@ -435,7 +435,16 @@ async function main() {
       getTaskManager().purgeCompletedTasks(PROCESS.COMPLETED_TASK_MAX_AGE_MS);
     }, PROCESS.PURGE_INTERVAL_MS);
 
-    Logger.debug(`opencode-mcp-tool listening on http://${host}:${port}/mcp`);
+    const displayHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    console.warn("");
+    console.warn("  ╭──────────────────────────────────────────────╮");
+    console.warn("  │       Better OpenCode MCP Server            │");
+    console.warn(`  │   ${`http://${displayHost}:${port}/mcp`.padEnd(42)}│`);
+    console.warn("  │                                              │");
+    console.warn(`  │   Version: 2.0.0${" ".repeat(27)}│`);
+    console.warn("  │   Status: running                            │");
+    console.warn("  ╰──────────────────────────────────────────────╯");
+    console.warn("");
   } else {
     const transport = new StdioServerTransport();
     await server.connect(transport);
@@ -446,6 +455,14 @@ async function main() {
     }, PROCESS.PURGE_INTERVAL_MS);
 
     Logger.debug("opencode-mcp-tool listening on stdio");
+    console.warn("");
+    console.warn("  ╭──────────────────────────────────────────────╮");
+    console.warn("  │       Better OpenCode MCP Server            │");
+    console.warn("  │   Mode: stdio (local)                       │");
+    console.warn("  │   Version: 2.0.0                            │");
+    console.warn("  │   Status: running                           │");
+    console.warn("  ╰──────────────────────────────────────────────╯");
+    console.warn("");
   }
 }
 
