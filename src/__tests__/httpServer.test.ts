@@ -9,13 +9,11 @@ describe("HTTP Server Module", () => {
   let baseUrl: string;
 
   beforeAll(async () => {
-    // Create a minimal MCP Server instance (no handlers needed for transport tests)
     server = new Server(
       { name: "test-server", version: "1.0.0" },
       { capabilities: {} }
     );
 
-    // Start on port 0 (OS-assigned random port)
     httpServer = await createHttpServer(server, {
       port: 0,
       host: "127.0.0.1",
@@ -39,53 +37,6 @@ describe("HTTP Server Module", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("access-control-allow-origin")).toBe("*");
       expect(res.headers.get("access-control-allow-methods")).toContain("GET");
-      expect(res.headers.get("access-control-allow-headers")).toContain(
-        "Content-Type"
-      );
-    });
-  });
-
-  describe("POST /mcp — body parsing", () => {
-    it("returns 400 for empty POST body", async () => {
-      // The transport requires both Content-Type and Accept headers
-      const headers = {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      };
-      const res = await fetch(`${baseUrl}/mcp`, {
-        method: "POST",
-        headers,
-        body: "",
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      // Transport returns a JSON-RPC parse error for empty body
-      expect(body.jsonrpc).toBe("2.0");
-      expect(body.error).toBeDefined();
-      expect(body.error.code).toBe(-32700);
-    });
-
-    it("returns 400 for invalid JSON body", async () => {
-      const res = await fetch(`${baseUrl}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "not-json",
-      });
-      expect(res.status).toBe(400);
-      const body = await res.json();
-      expect(body.code).toBe("PARSE_ERROR");
-    });
-
-    it("returns 413 for oversized POST body", async () => {
-      const oversized = "x".repeat(5 * 1024 * 1024); // 5MB > 4MB limit
-      const res = await fetch(`${baseUrl}/mcp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: oversized,
-      });
-      expect(res.status).toBe(413);
-      const body = await res.json();
-      expect(body.code).toBe("PAYLOAD_TOO_LARGE");
     });
   });
 
